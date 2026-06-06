@@ -41,33 +41,11 @@ export async function POST(req: NextRequest) {
     const clientName = `${client.firstName} ${client.lastName}`;
     const candidateName = `${candidate.firstName} ${candidate.lastName}`;
 
+    const geminiKey = process.env.GEMINI_API_KEY;
     const apiKey = process.env.ANTHROPIC_API_KEY;
+    const openaiKey = process.env.OPENAI_API_KEY;
 
-    // Simulated Fallback Stream if API Key is not set
-    if (!apiKey) {
-      const fallbackText = `Subject: Connecting you with a wonderful match - ${candidate.firstName} ${candidate.lastName}
-
-Dear ${client.firstName},
-
-I hope this email finds you well. I am writing to introduce you to a highly compatible match from our database - ${candidateName}, who works as a ${candidate.designation} based in ${candidate.city}. 
-
-In reviewing both of your details, I noticed that you both share a ${candidate.diet} diet preference, appreciate ${candidate.familyType} family values, and have very similar career ambitions. I believe you two would have a wonderful connection and suggest scheduling a quick introductory phone call to get acquainted.
-
-Please let me know if you would like me to share your profile with her and set this up.
-
-Warm regards,
-${matchmakerName}
-Matrimonial consultant, The Divine Connection`;
-
-      return new Response(simulateStream(fallbackText), {
-        headers: {
-          'Content-Type': 'text/plain; charset=utf-8',
-          'Transfer-Encoding': 'chunked',
-        }
-      });
-    }
-
-    // Call Anthropic API with Streaming
+    // Prompt details for AI
     const prompt = `Matchmaker Name: ${matchmakerName}
 Client Details:
 Name: ${clientName}
@@ -88,6 +66,194 @@ Designation: ${candidate.designation} at ${candidate.currentCompany}
 Religion: ${candidate.religion}
 Diet: ${candidate.diet}
 Family: ${candidate.familyType}`;
+
+    // 1. If OPENAI_API_KEY is present, call OpenAI API with Streaming
+    if (openaiKey) {
+      const systemInstruction = "You are a professional Indian matrimonial matchmaker writing a warm, polite email introducing a potential match (the candidate) to your client. Explain why they are a good match, suggest a next step (like a phone call or meeting), and sign off with your name and 'Matrimonial Consultant, The Divine Connection'. Keep the tone warm, professional, and culturally sensitive. Keep the intro short and personalized.";
+
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${openaiKey}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemInstruction },
+            { role: 'user', content: prompt }
+          ],
+          stream: true,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        return new Response(JSON.stringify({ error: `OpenAI API Error: ${errorText}` }), {
+          status: response.status,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      const stream = new ReadableStream({
+        async start(controller) {
+          if (!reader) {
+            controller.close();
+            return;
+          }
+
+          let buffer = '';
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (trimmed.startsWith('data: ')) {
+                const dataStr = trimmed.slice(6);
+                if (dataStr === '[DONE]') continue;
+                try {
+                  const data = JSON.parse(dataStr);
+                  const chunkText = data.choices?.[0]?.delta?.content;
+                  if (chunkText) {
+                    controller.enqueue(new TextEncoder().encode(chunkText));
+                  }
+                } catch {
+                  // Ignore parse errors or heartbeats
+                }
+              }
+            }
+          }
+          controller.close();
+        }
+      });
+
+      return new Response(stream, {
+        headers: {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Transfer-Encoding': 'chunked',
+          'X-AI-Provider': 'OpenAI'
+        }
+      });
+    }
+
+    // 2. If GEMINI_API_KEY is present, call Gemini API with Streaming
+    if (geminiKey) {
+      const systemInstruction = "You are a professional Indian matrimonial matchmaker writing a warm, polite email introducing a potential match (the candidate) to your client. Explain why they are a good match, suggest a next step (like a phone call or meeting), and sign off with your name and 'Matrimonial Consultant, The Divine Connection'. Keep the tone warm, professional, and culturally sensitive.";
+
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:streamGenerateContent?key=${geminiKey}&alt=sse`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: prompt }]
+            }
+          ],
+          systemInstruction: {
+            parts: [{ text: systemInstruction }]
+          }
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        return new Response(JSON.stringify({ error: `Gemini API Error: ${errorText}` }), {
+          status: response.status,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      const stream = new ReadableStream({
+        async start(controller) {
+          if (!reader) {
+            controller.close();
+            return;
+          }
+
+          let buffer = '';
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (trimmed.startsWith('data: ')) {
+                const dataStr = trimmed.slice(6);
+                try {
+                  const data = JSON.parse(dataStr);
+                  const chunkText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+                  if (chunkText) {
+                    controller.enqueue(new TextEncoder().encode(chunkText));
+                  }
+                } catch {
+                  // Ignore parse errors or heartbeats
+                }
+              }
+            }
+          }
+          controller.close();
+        }
+      });
+
+      return new Response(stream, {
+        headers: {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Transfer-Encoding': 'chunked',
+          'X-AI-Provider': 'Gemini'
+        }
+      });
+    }
+
+    // 3. Simulated Fallback Stream if neither key is set
+    if (!openaiKey && !geminiKey && !apiKey) {
+      const fallbackText = `Subject: Connecting you with a wonderful match - ${candidate.firstName} ${candidate.lastName}
+
+Dear ${client.firstName},
+
+I hope this email finds you well. I am writing to introduce you to a highly compatible match from our database - ${candidateName}, who works as a ${candidate.designation} based in ${candidate.city}. 
+
+In reviewing both of your details, I noticed that you both share a ${candidate.diet} diet preference, appreciate ${candidate.familyType} family values, and have very similar career ambitions. I believe you two would have a wonderful connection and suggest scheduling a quick introductory phone call to get acquainted.
+
+Please let me know if you would like me to share your profile with her and set this up.
+
+Warm regards,
+${matchmakerName}
+Matrimonial consultant, The Divine Connection`;
+
+      return new Response(simulateStream(fallbackText), {
+        headers: {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Transfer-Encoding': 'chunked',
+          'X-AI-Provider': 'Simulated AI'
+        }
+      });
+    }
+
+    // 3. Call Anthropic API with Streaming (if ANTHROPIC_API_KEY is present but GEMINI_API_KEY is not)
+    if (!apiKey) {
+      return new Response(JSON.stringify({ error: 'Anthropic API key is not configured' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -163,6 +329,7 @@ Family: ${candidate.familyType}`;
       headers: {
         'Content-Type': 'text/plain; charset=utf-8',
         'Transfer-Encoding': 'chunked',
+        'X-AI-Provider': 'Claude'
       }
     });
 

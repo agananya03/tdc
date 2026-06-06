@@ -78,12 +78,14 @@ export default function ClientDetailPage() {
   const [aiLoading, setAiLoading] = useState<{ [candidateId: string]: boolean }>({});
   const [aiError, setAiError] = useState<{ [candidateId: string]: string | null }>({});
   const [expandedAiInsights, setExpandedAiInsights] = useState<{ [candidateId: string]: boolean }>({});
+  const [aiProviders, setAiProviders] = useState<{ [candidateId: string]: string }>({});
 
   // AI Email Draft States (inside the modal)
   const [emailDraft, setEmailDraft] = useState('');
   const [isDraftingEmail, setIsDraftingEmail] = useState(false);
   const [emailDraftError, setEmailDraftError] = useState<string | null>(null);
   const [showEmailDraft, setShowEmailDraft] = useState(false);
+  const [emailDraftProvider, setEmailDraftProvider] = useState<string>('');
 
   // Find client
   const client = useMemo(() => {
@@ -181,8 +183,18 @@ export default function ClientDetailPage() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to generate matchmaking insights.');
+        let errorMsg = 'Failed to generate matchmaking insights.';
+        try {
+          const errData = await response.json();
+          if (errData && errData.error) {
+            errorMsg = errData.error;
+          }
+        } catch {}
+        throw new Error(errorMsg);
       }
+
+      const provider = response.headers.get('x-ai-provider') || 'Claude';
+      setAiProviders(prev => ({ ...prev, [candidate.id]: provider }));
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
@@ -219,6 +231,7 @@ export default function ClientDetailPage() {
     setShowEmailDraft(false);
     setEmailDraft('');
     setEmailDraftError(null);
+    setEmailDraftProvider('');
   };
 
   // Stream AI Introduction Email Draft
@@ -242,8 +255,18 @@ export default function ClientDetailPage() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to draft the intro email.');
+        let errorMsg = 'Failed to draft the intro email.';
+        try {
+          const errData = await response.json();
+          if (errData && errData.error) {
+            errorMsg = errData.error;
+          }
+        } catch {}
+        throw new Error(errorMsg);
       }
+
+      const provider = response.headers.get('x-ai-provider') || 'Claude';
+      setEmailDraftProvider(provider);
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
@@ -919,7 +942,7 @@ export default function ClientDetailPage() {
                                         <Sparkles className="size-3 text-primary animate-pulse" />
                                         Matrimonial AI Compatibility Insight
                                       </span>
-                                      <span className="opacity-80">Powered by Claude</span>
+                                      <span className="opacity-80">Powered by {aiProviders[candidate.id] || 'Claude'}</span>
                                     </div>
 
                                     {/* Streaming / Typing Indicator */}
@@ -1228,7 +1251,7 @@ export default function ClientDetailPage() {
                   >
                     <div className="flex items-center justify-between text-[10px] text-muted-foreground font-bold uppercase tracking-wider">
                       <span>Email Introduction Draft</span>
-                      <span>Powered by Claude</span>
+                      <span>Powered by {emailDraftProvider || 'Claude'}</span>
                     </div>
                     
                     {emailDraftError ? (

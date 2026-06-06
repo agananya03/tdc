@@ -17,9 +17,13 @@ Ensure you have [Node.js](https://nodejs.org/) installed (v18 or higher is recom
    npm install
    ```
 3. **Configure Environment Variables (Optional)**:
-   Create a `.env` file in the root directory and add your Anthropic API Key to enable live Claude integration. If no key is set, the system automatically falls back to a simulated, high-fidelity word-by-word streaming generator for offline testing:
+   Create a `.env` file in the root directory and add your free Gemini API Key (or Anthropic API Key) to enable live AI integration. If no key is set, the system automatically falls back to a simulated, high-fidelity streaming generator for offline testing:
    ```env
-   ANTHROPIC_API_KEY=your_claude_api_key_here
+   # Recommended (Free tier available at Google AI Studio)
+   GEMINI_API_KEY=your_google_gemini_api_key_here
+
+   # Alternative (Paid Claude API)
+   # ANTHROPIC_API_KEY=your_claude_api_key_here
    ```
 4. **Start the Development Server**:
    ```bash
